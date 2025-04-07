@@ -1,10 +1,3 @@
-#-------------------------------------------------------------------------------
-# Name:        interpreter
-# Purpose:     IPPe final project - Three code address interpreter
-#
-# Author:      Guillermo Montes Martos (xmonte03)
-# Created:     April 18
-#-------------------------------------------------------------------------------
 
 
 import sys
@@ -14,380 +7,489 @@ from _elementtree import ParseError
 
 class Interpreter:
 
-    def __init__(self, input):
+    def __init__(self, input, debug=False):
+        self.filename = input  # Use the input parameter for the filename
+        self.instructions = []  # Initialize instructions
+        self.vars = {}
+        self.debug = debug  # Store the debug flag
+        self.load_file()  # Load the instructions from the XML file
         try:
-            self.program = etree.parse(input).getroot()
+            self.program = etree.parse(self.filename).getroot()
         except ParseError:
             print('Error during the parsing of XML, invalid XML input or file cannot be opened.', file=sys.stderr)
             exit(3)
         self.variables = {}
+        # Initialize True and False as string values
+        self.variables["True"] = "true"
+        self.variables["False"] = "false"
         self.labels = {}
         self.pc = 0
         self.data_stack = []
         self.call_stack = []
 
+    def log_debug(self, message):
+        """Print debug message only if debug mode is enabled"""
+        if self.debug:
+            print(f"[DEBUG] {message}", file=sys.stderr)
+
+    def load_file(self):
+        pass  # Placeholder for file loading logic if needed
 
     def run(self):
         self.read_labels()
         self.check_args()
+        # Map of operation names to method names
+        op_method_map = {
+            'PRINT': 'print_',
+            'RETURN': 'return_',
+            'READINT': 'read_int',
+            'READSTR': 'readstr',
+            'INTSTR': 'intstr',
+            'CONCAT': 'concat',
+            'LEN': 'len_',
+            'GETAT': 'getat',
+            'STRBOOL': 'strbool',  # Add mapping for STRBOOL
+            'JUMPIFGR': 'jumpifgr',
+            'JUMPIFEQ': 'jumpifeq',
+            'IFGOTO': 'ifgoto',
+            'PUSH': 'push',
+            'POP': 'pop',
+            # Add other mappings as needed
+        }
+        
         while self.pc < len(self.program):
             op = self.program[self.pc].attrib['opcode']
-            if op == 'MOV':
-                self.mov(self.program[self.pc])
-            elif op == 'ADD':
-                self.add(self.program[self.pc])
-            elif op == 'SUB':
-                self.sub(self.program[self.pc])
-            elif op == 'MUL':
-                self.mul(self.program[self.pc])
-            elif op == 'DIV':
-                self.div(self.program[self.pc])
-            elif op == 'READINT':
-                self.read_int(self.program[self.pc])
-            elif op == 'PRINT':
-                self.print_(self.program[self.pc])
-            elif op == 'LABEL':
-                self.label(self.program[self.pc])
-            elif op == 'JUMP':
-                self.jump(self.program[self.pc])
-            elif op == 'JUMPIFEQ':
-                self.jumpifeq(self.program[self.pc])
-            elif op == 'JUMPIFGR':
-                self.jumpifgr(self.program[self.pc])
-            elif op == 'CALL':
-                self.call(self.program[self.pc])
-            elif op == 'RETURN':
-                self.return_(self.program[self.pc])
-            elif op == 'PUSH':
-                self.push(self.program[self.pc])
-            elif op == 'POP':
-                self.pop(self.program[self.pc])
-            elif op == 'READSTR':
-                self.readstr(self.program[self.pc])
-            elif op == 'CONCAT':
-                self.concat(self.program[self.pc])
-            elif op == 'GETAT':
-                self.getat(self.program[self.pc])
-            elif op == 'LEN':
-                self.len(self.program[self.pc])
-            elif op == 'STRINT':
-                self.strint(self.program[self.pc])
-            elif op == 'INTSTR':
-                self.intstr(self.program[self.pc])
+            # Debug log
+            self.log_debug(f"Processing operation: {op} at pc={self.pc}")
+            
+            # Use the mapping if available, otherwise use lowercase operation name
+            method_name = op_method_map.get(op, op.lower())
+            operation = getattr(self, method_name, None)
+            
+            if callable(operation):
+                self.log_debug(f"Calling method: {method_name}")
+                operation(self.program[self.pc])
             else:
-                print('Semantic Error during the semantic checks: invalid operation.', file=sys.stderr)
+                print(f'Semantic Error: Invalid operation "{op}" (method: {method_name} not found).', file=sys.stderr)
                 exit(5)
             self.pc += 1
-            #print(op + ' | pc='+str(self.pc-1))
-            #print(self.data_stack)
-            #print(self.variables)
 
     def read_labels(self):
-        for i in range(len(self.program)):
-            if self.program[i].attrib['opcode'] == 'LABEL':
-                if self.program[i].find('dst').text in self.labels:
-                    print("Semantic Error during the semantic checks: label duplicated", file=sys.stderr)
+        for i, instruction in enumerate(self.program):
+            if instruction.attrib['opcode'] == 'LABEL':
+                label = instruction.find('dst')
+                if label.text in self.labels:
+                    print("Semantic Error: Label duplicated", file=sys.stderr)
                     exit(5)
-                elif self.program[i].find('dst').attrib['kind'] != 'literal' or self.program[i].find('dst').attrib['type'] != 'string':
-                    print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+                if label.attrib['kind'] != 'literal' or label.attrib['type'] != 'string':
+                    print("Run-time Error: Label must be a literal string.", file=sys.stderr)
                     exit(14)
-                else:
-                    self.labels[self.program[i].find('dst').text] = i
-
+                self.labels[label.text] = i
 
     def check_args(self):
-        for taci in self.program:
-            if len(taci.attrib) > 3:
-                print('Semantic Error during the semantic checks: more arguments than needed.', file=sys.stderr)
+        for instruction in self.program:
+            if len(instruction.attrib) > 3:
+                print('Semantic Error: Too many arguments.', file=sys.stderr)
                 exit(5)
-            for arg in taci:
+            for arg in instruction:
                 if arg.tag not in ['src1', 'src2', 'dst']:
-                    print("Semantic Error during the semantic checks: bad syntax for arguments.", file=sys.stderr)
+                    print("Semantic Error: Invalid argument tag.", file=sys.stderr)
                     exit(5)
-                elif arg.attrib['kind'] == 'variable' and not (not arg.text[0].isdigit() and all(c.isalnum() or c == '_' for c in arg.text)):
-                    print('Semantic Error during the semantic checks: invalid variable name: ' + arg.text, file=sys.stderr)
+                if 'kind' not in arg.attrib:
+                    print("Semantic Error: Missing 'kind' attribute.", file=sys.stderr)
                     exit(5)
-
+                if 'type' not in arg.attrib:
+                    print("Semantic Error: Missing 'type' attribute.", file=sys.stderr)
+                    exit(5)
+                if arg.attrib['kind'] == 'variable' and not (arg.text and (not arg.text[0].isdigit()) and all(c.isalnum() or c == '_' for c in arg.text)):
+                    print(f"Semantic Error: Invalid variable name '{arg.text}'.", file=sys.stderr)
+                    exit(5)
 
     def get_src_value(self, src):
+        if 'kind' not in src.attrib:
+            print("Semantic Error: Missing 'kind'.", file=sys.stderr)
+            exit(5)
         if src.attrib['kind'] == 'variable':
-            try:
-                return self.variables[src.text]
-            except KeyError:
-                print("Run-time Error: Read access to non-defined or non-initialized variable." + src.text, file=sys.stderr)
+            if src.text not in self.variables:
+                print(f"Run-time Error: Uninitialized variable '{src.text}'.", file=sys.stderr)
                 exit(11)
-        else:
-            if src.attrib['type'] == 'integer':
-                try:
-                    return int(src.text)
-                except ValueError:
-                    print("Run-time Error: Invalid literal for a integer", file=sys.stderr)
-                    exit(20)
-            else:
-                return src.text
-
-
-    def mov(self, command):
-        if command.find('dst') is None or command.find('src1') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+            return self.variables[src.text]
+        if 'type' not in src.attrib:
+            print("Semantic Error: Missing 'type'.", file=sys.stderr)
             exit(5)
-        if command.find('dst').attrib['kind'] == 'variable':
-            self.variables[command.find('dst').text] = self.get_src_value(command.find('src1'))
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
-            exit(14)
-
-
-    def add(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if all(arg.attrib['type'] == 'integer' for arg in command) and command.find('dst').attrib['kind'] == 'variable':
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
-            self.variables[command.find('dst').text] = src1 + src2
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
-            exit(14)
-
-
-    def sub(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if all(arg.attrib['type'] == 'integer' for arg in command) and command.find('dst').attrib['kind'] == 'variable':
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
-            self.variables[command.find('dst').text] = src1 - src2
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
-            exit(14)
-
-
-    def mul(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if all(arg.attrib['type'] == 'integer' for arg in command) and command.find('dst').attrib['kind'] == 'variable':
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
-            self.variables[command.find('dst').text] = src1 * src2
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
-            exit(14)
-
-
-    def div(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if all(arg.attrib['type'] == 'integer' for arg in command) and command.find('dst').attrib['kind'] == 'variable':
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
+        if src.attrib['type'] == 'integer':
             try:
-                self.variables[command.find('dst').text] = int(src1 / src2)
-            except ZeroDivisionError:
-                print("Run-time Error: Division by zero using DIV instruction.", file=sys.stderr)
-                exit(12)
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
-            exit(14)
-
-
-    def read_int(self, command):
-        if command.find('dst') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if command.find('dst').attrib['kind'] == 'variable' and command.find('dst').attrib['type'] == 'integer':
-            try:
-                self.variables[command.find('dst').text] = int(input(command.find('dst').text + ' = '))
+                return int(src.text)
             except ValueError:
-                print("Run-time Error: READINT get invalid value.", file=sys.stderr)
+                print("Run-time Error: Invalid integer literal.", file=sys.stderr)
+                exit(20)
+        # Handle boolean literals in string form
+        if src.text.lower() == "true":
+            return True
+        elif src.text.lower() == "false":
+            return False
+        # Return as string
+        return src.text
+
+    def mov(self, cmd):
+        dst, src = cmd.find('dst'), cmd.find('src1')
+        if dst is None or src is None:
+            print("Semantic Error: Missing argument.", file=sys.stderr)
+            exit(5)
+        if dst.attrib['kind'] == 'variable':
+            self.variables[dst.text] = self.get_src_value(src)
+        else:
+            print("Run-time Error: MOV destination must be a variable.", file=sys.stderr)
+            exit(14)
+
+    def add(self, cmd):
+        self.binary_op(cmd, lambda x, y: x + y)
+
+    def sub(self, cmd):
+        self.binary_op(cmd, lambda x, y: x - y)
+
+    def mul(self, cmd):
+        self.binary_op(cmd, lambda x, y: x * y)
+
+    def div(self, cmd):
+        def safe_div(x, y):
+            if y == 0:
+                print("Run-time Error: Division by zero.", file=sys.stderr)
+                exit(12)
+            return x // y
+        self.binary_op(cmd, safe_div)
+
+    def binary_op(self, cmd, operation):
+        dst, src1, src2 = cmd.find('dst'), cmd.find('src1'), cmd.find('src2')
+        if None in (dst, src1, src2):
+            print("Semantic Error: Missing argument.", file=sys.stderr)
+            exit(5)
+            
+        if dst.attrib['kind'] != 'variable':
+            print("Run-time Error: Binary operation destination must be a variable.", file=sys.stderr)
+            exit(14)
+            
+        # Get the values
+        val1 = self.get_src_value(src1)
+        val2 = self.get_src_value(src2)
+        
+        # Try to convert values to integers for arithmetic operations
+        try:
+            if isinstance(val1, str) and val1.isdigit():
+                val1 = int(val1)
+            if isinstance(val2, str) and val2.isdigit():
+                val2 = int(val2)
+                
+            # Print debug information
+            self.log_debug(f"Operating on values: {val1} ({type(val1)}) and {val2} ({type(val2)})")
+            
+            # Perform the operation
+            result = operation(val1, val2)
+            self.variables[dst.text] = result
+        except (ValueError, TypeError) as e:
+            print(f"Run-time Error: Cannot perform operation on these types: {e}", file=sys.stderr)
+            exit(14)
+
+    def print_(self, cmd):
+        src = cmd.find('src1')
+        if src is None:
+            print("Semantic Error: PRINT missing source argument.", file=sys.stderr)
+            exit(5)
+        print(str(self.get_src_value(src)))
+
+    def read_int(self, cmd):
+        dst = cmd.find('dst')
+        if dst is None:
+            print("Semantic Error: READINT missing destination.", file=sys.stderr)
+            exit(5)
+        if dst.attrib['kind'] == 'variable' and dst.attrib['type'] == 'integer':
+            try:
+                self.variables[dst.text] = int(input(f"{dst.text} = "))
+            except ValueError:
+                print("Run-time Error: Invalid integer input.", file=sys.stderr)
                 exit(13)
         else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+            print("Run-time Error: READINT requires integer variable.", file=sys.stderr)
             exit(14)
 
-
-    def print_(self, command):
-        if command.find('src1') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+    def readstr(self, cmd):
+        dst = cmd.find('dst')
+        if dst is None:
+            print("Semantic Error: READSTR missing destination.", file=sys.stderr)
             exit(5)
-        print(str( self.get_src_value(command.find('src1')) ))
-
-
-    def label(self, command):
-        return
-
-
-    def jump(self, command):
-        if command.find('dst') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if command.find('dst').attrib['kind'] != 'literal' or command.find('dst').attrib['type'] != 'string':
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+        if dst.attrib['kind'] == 'variable':
+            # Read a string from the user input
+            self.variables[dst.text] = input(f"{dst.text} = ")
+        else:
+            print("Run-time Error: READSTR destination must be a variable.", file=sys.stderr)
             exit(14)
-        elif command.find('dst').text not in self.labels:
-            print("Run-time Error: Jump to a non-existing label or call to non-existing function.", file=sys.stderr)
+
+    def label(self, cmd):
+        pass
+
+    def jump(self, cmd):
+        self._jump_common(cmd, always_jump=True)
+
+    def jumpifeq(self, cmd):
+        if self._compare_args(cmd, lambda x, y: x == y):
+            self._jump_common(cmd)
+
+    def jumpifgr(self, cmd):
+        if self._compare_args(cmd, lambda x, y: x > y):
+            self._jump_common(cmd)
+
+    def ifgoto(self, cmd):
+        # IFGOTO is similar to JUMPIFEQ but with a different comparison
+        # It jumps if src1 <= src2
+        dst, src1, src2 = cmd.find('dst'), cmd.find('src1'), cmd.find('src2')
+        if None in (dst, src1, src2):
+            print("Semantic Error: IFGOTO operation missing argument.", file=sys.stderr)
+            exit(5)
+        
+        # Check if dst is a valid label
+        if dst.attrib['kind'] != 'literal' or dst.attrib['type'] != 'string':
+            print("Run-time Error: IFGOTO requires a label as destination.", file=sys.stderr)
+            exit(14)
+            
+        # Get values and compare
+        val1 = self.get_src_value(src1)
+        val2 = self.get_src_value(src2)
+        
+        # Jump if src1 <= src2
+        if val1 <= val2:
+            if dst.text not in self.labels:
+                print(f"Run-time Error: Label '{dst.text}' not found.", file=sys.stderr)
+                exit(10)
+            self.pc = self.labels[dst.text] - 1  # Adjusted because self.pc will increment after
+
+    def _compare_args(self, cmd, comparator):
+        dst, src1, src2 = cmd.find('dst'), cmd.find('src1'), cmd.find('src2')
+        if None in (dst, src1, src2):
+            print("Semantic Error: JUMPIF operation missing argument.", file=sys.stderr)
+            exit(5)
+            
+        # Check if dst is a valid label
+        if dst.attrib['type'] != 'string' or dst.attrib['kind'] != 'literal':
+            print("Run-time Error: JUMPIF destination must be a label (literal string).", file=sys.stderr)
+            exit(14)
+            
+        # Get the values for comparison
+        val1 = self.get_src_value(src1)
+        val2 = self.get_src_value(src2)
+        
+        # Attempt to convert values for comparison
+        try:
+            # If both values can be converted to integers, do so for comparison
+            if isinstance(val1, str) and val1.isdigit() and isinstance(val2, int):
+                val1 = int(val1)
+            elif isinstance(val2, str) and val2.isdigit() and isinstance(val1, int):
+                val2 = int(val2)
+                
+            # Print debug information
+            self.log_debug(f"Comparing values: {val1} ({type(val1)}) and {val2} ({type(val2)})")
+            
+            # Perform the comparison
+            return comparator(val1, val2)
+        except (ValueError, TypeError) as e:
+            print(f"Run-time Error: Cannot compare values of different types: {e}", file=sys.stderr)
+            exit(14)
+
+    def _jump_common(self, cmd, always_jump=False):
+        label = cmd.find('dst')
+        if label is None:
+            print("Semantic Error: JUMP missing destination.", file=sys.stderr)
+            exit(5)
+        if label.attrib['kind'] != 'literal' or label.attrib['type'] != 'string' or label.text not in self.labels:
+            print("Run-time Error: Invalid jump label.", file=sys.stderr)
             exit(10)
-        else:
-            self.pc = self.labels[command.find('dst').text]
+        if always_jump or label.text in self.labels:
+            self.pc = self.labels[label.text] - 1  # Adjusted because self.pc will increment after
 
-
-    def jumpifeq(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if command.find('src1').attrib['type'] != command.find('src2').attrib['type'] or command.find('dst').attrib['type'] != 'string' or command.find('dst').attrib['kind'] != 'literal':
-            print('Run-time Error: Operands of incompatible type.', file=sys.stderr)
+    def call(self, cmd):
+        label = cmd.find('dst')
+        if label is None or label.attrib['kind'] != 'literal' or label.attrib['type'] != 'string':
+            print("Run-time Error: Invalid call label.", file=sys.stderr)
             exit(14)
-        else:
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
-            if src1 == src2:
-                try:
-                    self.pc = self.labels[command.find('dst').text]
-                except KeyError:
-                    print('Run-time Error: Jump to a non-existing label or call to non-existing function.', file=sys.stderr)
-                    exit(10)
-
-
-    def jumpifgr(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if command.find('src1').attrib['type'] != command.find('src2').attrib['type'] or command.find('dst').attrib['type'] != 'string' or command.find('dst').attrib['kind'] != 'literal':
-            print('Run-time Error: Operands of incompatible type.', file=sys.stderr)
-            exit(14)
-        else:
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
-            if src1 > src2:
-                try:
-                    self.pc = self.labels[command.find('dst').text]
-                except KeyError:
-                    print('Run-time Error: Jump to a non-existing label or call to non-existing function.', file=sys.stderr)
-                    exit(10)
-
-
-    def call(self, command):
-        if command.find('dst') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if command.find('dst').attrib['kind'] != 'literal' or command.find('dst').attrib['type'] != 'string':
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
-            exit(14)
-        elif command.find('dst').text not in self.labels:
-            print("Run-time Error: Jump to a non-existing label or call to non-existing function.", file=sys.stderr)
+        if label.text not in self.labels:
+            print("Run-time Error: Function label not found.", file=sys.stderr)
             exit(10)
-        else:
-            self.call_stack.append(self.pc)
-            self.pc = self.labels[command.find('dst').text]
+        self.call_stack.append(self.pc)
+        self.pc = self.labels[label.text] - 1
 
-
-    def return_(self, command):
-        if len(self.call_stack) == 0:
-            print('Run-time Error: Pop from the empty call stack is forbidden', file=sys.stderr)
-            exit(15)
-        else:
-            self.pc = self.call_stack.pop()
-
-
-    def push(self, command):
-        if command.find('src1') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+    def return_(self, cmd):
+        if not self.call_stack:
+            print("Run-time Error: Call stack is empty on RETURN.", file=sys.stderr)
+            exit(10)
+        self.pc = self.call_stack.pop()
+        
+    def push(self, cmd):
+        src = cmd.find('src1')
+        if src is None:
+            print("Semantic Error: PUSH missing source argument.", file=sys.stderr)
             exit(5)
-
-        self.data_stack.append(self.get_src_value(command.find('src1')))
-
-
-    def pop(self, command):
-        if command.find('dst') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+        value = self.get_src_value(src)
+        self.data_stack.append(value)
+        
+    def pop(self, cmd):
+        dst = cmd.find('dst')
+        if dst is None:
+            print("Semantic Error: POP missing destination argument.", file=sys.stderr)
             exit(5)
-        if command.find('dst').attrib['kind'] != 'variable':
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+        if dst.attrib['kind'] != 'variable':
+            print("Run-time Error: POP destination must be a variable.", file=sys.stderr)
             exit(14)
-        elif len(self.data_stack) == 0:
-            print('Run-time Error: Pop from the empty data stack is forbidden', file=sys.stderr)
-            exit(15)
-        else:
-            self.variables[command.find('dst').text] = self.data_stack.pop()
+        if not self.data_stack:
+            print("Run-time Error: Data stack is empty on POP.", file=sys.stderr)
+            exit(10)
+        self.variables[dst.text] = self.data_stack.pop()
 
-
-    def readstr(self, command):
-        if command.find('dst') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+    def intstr(self, cmd):
+        dst, src = cmd.find('dst'), cmd.find('src1')
+        if dst is None or src is None:
+            print("Semantic Error: INTSTR missing argument.", file=sys.stderr)
             exit(5)
-        if command.find('dst').attrib['kind'] == 'variable' and command.find('dst').attrib['type'] == 'string':
-            self.variables[command.find('dst').text] = input(command.find('dst').text + ' = ')
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+        
+        if dst.attrib['kind'] != 'variable':
+            print("Run-time Error: INTSTR destination must be a variable.", file=sys.stderr)
             exit(14)
-
-
-    def concat(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
-            exit(5)
-        if command.find('src1').attrib['type'] == command.find('src2').attrib['type'] and command.find('src1').attrib['type'] == 'string' and command.find('dst').attrib['kind'] == 'variable':
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
-            self.variables[command.find('dst').text] = src1 + src2
-        else:
-            print('Run-time Error: Operands of incompatible type.', file=sys.stderr)
+            
+        # Get the source value
+        val = self.get_src_value(src)
+        
+        # Convert integer to string
+        try:
+            if not isinstance(val, int):
+                # If not already an integer, try to convert
+                val = int(val)
+            # Store the string representation
+            self.variables[dst.text] = str(val)
+        except (ValueError, TypeError) as e:
+            print(f"Run-time Error: Cannot convert to string: {e}", file=sys.stderr)
             exit(14)
 
-
-    def getat(self, command):
-        if command.find('dst') is None or command.find('src1') is None or command.find('src2') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+    def concat(self, cmd):
+        dst, src1, src2 = cmd.find('dst'), cmd.find('src1'), cmd.find('src2')
+        if None in (dst, src1, src2):
+            print("Semantic Error: CONCAT missing argument.", file=sys.stderr)
             exit(5)
-        if command.find('src1').attrib['type'] == 'string' and command.find('src2').attrib['type'] == 'integer' and command.find('dst').attrib['kind'] == 'variable':
-            src1 = self.get_src_value(command.find('src1'))
-            src2 = self.get_src_value(command.find('src2'))
-            try:
-                self.variables[command.find('dst').text] = src1[src2]
-            except IndexError:
-                print("Run-time Error: Index out of bounds.", file=sys.stderr)
-                exit(20)
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+        
+        if dst.attrib['kind'] != 'variable':
+            print("Run-time Error: CONCAT destination must be a variable.", file=sys.stderr)
+            exit(14)
+            
+        # Get the source values
+        val1 = self.get_src_value(src1)
+        val2 = self.get_src_value(src2)
+        
+        # Convert to strings and concatenate
+        try:
+            str1 = str(val1)
+            str2 = str(val2)
+            result = str1 + str2
+            self.variables[dst.text] = result
+            self.log_debug(f"Concatenated: '{str1}' + '{str2}' = '{result}'")
+        except Exception as e:
+            print(f"Run-time Error: Cannot concatenate: {e}", file=sys.stderr)
             exit(14)
 
-
-    def len(self, command):
-        if command.find('dst') is None or command.find('src1') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+    def len_(self, cmd):
+        dst, src = cmd.find('dst'), cmd.find('src1')
+        if dst is None or src is None:
+            print("Semantic Error: LEN missing argument.", file=sys.stderr)
             exit(5)
-        if command.find('src1').attrib['type'] == 'string' and command.find('dst').attrib['type'] == 'integer' and command.find('dst').attrib['kind'] == 'variable':
-            self.variables[command.find('dst').text] = len( self.get_src_value(command.find('src1')) )
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+        
+        if dst.attrib['kind'] != 'variable':
+            print("Run-time Error: LEN destination must be a variable.", file=sys.stderr)
+            exit(14)
+            
+        # Get the source value
+        val = self.get_src_value(src)
+        
+        # Calculate string length
+        try:
+            str_val = str(val)
+            length = len(str_val)
+            self.variables[dst.text] = length
+            self.log_debug(f"String length of '{str_val}': {length}")
+        except Exception as e:
+            print(f"Run-time Error: Cannot calculate length: {e}", file=sys.stderr)
             exit(14)
 
-
-    def strint(self, command):
-        if command.find('dst') is None or command.find('src1') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+    def getat(self, cmd):
+        dst, src1, src2 = cmd.find('dst'), cmd.find('src1'), cmd.find('src2')
+        if None in (dst, src1, src2):
+            print("Semantic Error: GETAT missing argument.", file=sys.stderr)
             exit(5)
-        if command.find('src1').attrib['type'] == 'string' and command.find('dst').attrib['type'] == 'integer' and command.find('dst').attrib['kind'] == 'variable':
-            try:
-                self.variables[command.find('dst').text] = int( self.get_src_value(command.find('src1')) )
-            except ValueError:
-                print("Run-time Error: Invalid literal for a integer", file=sys.stderr)
-                exit(20)
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+        
+        if dst.attrib['kind'] != 'variable':
+            print("Run-time Error: GETAT destination must be a variable.", file=sys.stderr)
+            exit(14)
+            
+        # Get the source string and index
+        string_val = self.get_src_value(src1)
+        index_val = self.get_src_value(src2)
+        
+        # Get character at index
+        try:
+            if not isinstance(index_val, int):
+                # If not already an integer, try to convert
+                index_val = int(index_val)
+                
+            # Check if index is valid
+            if index_val < 0 or index_val >= len(str(string_val)):
+                print(f"Run-time Error: Index {index_val} out of bounds for string of length {len(str(string_val))}", file=sys.stderr)
+                exit(10)
+                
+            # Get the character at the specified index
+            result = str(string_val)[index_val]
+            self.variables[dst.text] = result
+            self.log_debug(f"Character at index {index_val} in '{string_val}': '{result}'")
+        except (ValueError, TypeError, IndexError) as e:
+            print(f"Run-time Error: Cannot get character at index: {e}", file=sys.stderr)
             exit(14)
 
-
-    def intstr(self, command):
-        if command.find('dst') is None or command.find('src1') is None:
-            print('Semantic Error during the semantic checks: bad syntax for arguments.', file=sys.stderr)
+    def strbool(self, cmd):
+        dst, src = cmd.find('dst'), cmd.find('src1')
+        if dst is None or src is None:
+            print("Semantic Error: STRBOOL missing argument.", file=sys.stderr)
             exit(5)
-        if command.find('src1').attrib['type'] == 'integer' and command.find('dst').attrib['type'] == 'string' and command.find('dst').attrib['kind'] == 'variable':
-            self.variables[command.find('dst').text] = str( self.get_src_value(command.find('src1')) )
-        else:
-            print("Run-time Error: Operands of incompatible type.", file=sys.stderr)
+        
+        if dst.attrib['kind'] != 'variable':
+            print("Run-time Error: STRBOOL destination must be a variable.", file=sys.stderr)
             exit(14)
+            
+        # Get the source value
+        val = self.get_src_value(src)
+        
+        # Convert boolean to string
+        try:
+            # Handle Python boolean values
+            if val is True:
+                self.variables[dst.text] = "true"
+            elif val is False:
+                self.variables[dst.text] = "false"
+            # Handle integer values (1 and 0)
+            elif val == 1:
+                self.variables[dst.text] = "true"
+            elif val == 0:
+                self.variables[dst.text] = "false"
+            # Handle string values
+            elif isinstance(val, str):
+                if val.lower() in ["true", "1"]:
+                    self.variables[dst.text] = "true"
+                elif val.lower() in ["false", "0"]:
+                    self.variables[dst.text] = "false"
+                else:
+                    self.variables[dst.text] = "false"  # Default for non-boolean strings
+            else:
+                # Any non-zero value is considered true
+                self.variables[dst.text] = "true" if val else "false"
+                
+            self.log_debug(f"Converted boolean '{val}' to string: '{self.variables[dst.text]}'")
+        except Exception as e:
+            print(f"Run-time Error: Cannot convert to string: {e}", file=sys.stderr)
+            exit(14)
+
+# Example of usage:
+# interpreter = Interpreter('program.xml')
+# interpreter.run()

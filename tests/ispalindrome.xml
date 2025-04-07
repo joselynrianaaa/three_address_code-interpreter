@@ -119,7 +119,7 @@
     <dst kind="literal" type="string">TRUE</dst>
   </taci>
   <taci opcode="PRINT">
-    <src1 kind="literal" type="string">True</src1>
+    <src1 kind="variable" type="string">True</src1>
   </taci>
   <taci opcode="LABEL">
     <dst kind="literal" type="string">END</dst>
