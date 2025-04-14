@@ -1,31 +1,30 @@
-
-
 import sys
 import xml.etree.ElementTree as etree
 from _elementtree import ParseError
+import time  # Added for timing execution
 
 
 class Interpreter:
 
     def __init__(self, input, debug=False):
-        self.filename = input  # Use the input parameter for the filename
-        self.instructions = []  # Initialize instructions
+        self.filename = input  
+        self.instructions = []  
         self.vars = {}
-        self.debug = debug  # Store the debug flag
-        self.load_file()  # Load the instructions from the XML file
+        self.debug = debug 
+        self.load_file()  
         try:
             self.program = etree.parse(self.filename).getroot()
         except ParseError:
             print('Error during the parsing of XML, invalid XML input or file cannot be opened.', file=sys.stderr)
             exit(3)
         self.variables = {}
-        # Initialize True and False as string values
         self.variables["True"] = "true"
         self.variables["False"] = "false"
         self.labels = {}
         self.pc = 0
         self.data_stack = []
         self.call_stack = []
+        self.execution_time = 0  # Track execution time
 
     def log_debug(self, message):
         """Print debug message only if debug mode is enabled"""
@@ -33,12 +32,11 @@ class Interpreter:
             print(f"[DEBUG] {message}", file=sys.stderr)
 
     def load_file(self):
-        pass  # Placeholder for file loading logic if needed
+        pass 
 
     def run(self):
         self.read_labels()
         self.check_args()
-        # Map of operation names to method names
         op_method_map = {
             'PRINT': 'print_',
             'RETURN': 'return_',
@@ -48,21 +46,20 @@ class Interpreter:
             'CONCAT': 'concat',
             'LEN': 'len_',
             'GETAT': 'getat',
-            'STRBOOL': 'strbool',  # Add mapping for STRBOOL
+            'STRBOOL': 'strbool',  
             'JUMPIFGR': 'jumpifgr',
             'JUMPIFEQ': 'jumpifeq',
             'IFGOTO': 'ifgoto',
             'PUSH': 'push',
             'POP': 'pop',
-            # Add other mappings as needed
         }
+        
+        start_time = time.time()
         
         while self.pc < len(self.program):
             op = self.program[self.pc].attrib['opcode']
-            # Debug log
             self.log_debug(f"Processing operation: {op} at pc={self.pc}")
             
-            # Use the mapping if available, otherwise use lowercase operation name
             method_name = op_method_map.get(op, op.lower())
             operation = getattr(self, method_name, None)
             
@@ -73,6 +70,9 @@ class Interpreter:
                 print(f'Semantic Error: Invalid operation "{op}" (method: {method_name} not found).', file=sys.stderr)
                 exit(5)
             self.pc += 1
+            
+        self.execution_time = time.time() - start_time
+        return self.execution_time
 
     def read_labels(self):
         for i, instruction in enumerate(self.program):
@@ -123,12 +123,10 @@ class Interpreter:
             except ValueError:
                 print("Run-time Error: Invalid integer literal.", file=sys.stderr)
                 exit(20)
-        # Handle boolean literals in string form
         if src.text.lower() == "true":
             return True
         elif src.text.lower() == "false":
             return False
-        # Return as string
         return src.text
 
     def mov(self, cmd):
@@ -169,21 +167,17 @@ class Interpreter:
             print("Run-time Error: Binary operation destination must be a variable.", file=sys.stderr)
             exit(14)
             
-        # Get the values
         val1 = self.get_src_value(src1)
         val2 = self.get_src_value(src2)
         
-        # Try to convert values to integers for arithmetic operations
         try:
             if isinstance(val1, str) and val1.isdigit():
                 val1 = int(val1)
             if isinstance(val2, str) and val2.isdigit():
                 val2 = int(val2)
                 
-            # Print debug information
             self.log_debug(f"Operating on values: {val1} ({type(val1)}) and {val2} ({type(val2)})")
             
-            # Perform the operation
             result = operation(val1, val2)
             self.variables[dst.text] = result
         except (ValueError, TypeError) as e:
@@ -218,7 +212,6 @@ class Interpreter:
             print("Semantic Error: READSTR missing destination.", file=sys.stderr)
             exit(5)
         if dst.attrib['kind'] == 'variable':
-            # Read a string from the user input
             self.variables[dst.text] = input(f"{dst.text} = ")
         else:
             print("Run-time Error: READSTR destination must be a variable.", file=sys.stderr)
@@ -239,28 +232,23 @@ class Interpreter:
             self._jump_common(cmd)
 
     def ifgoto(self, cmd):
-        # IFGOTO is similar to JUMPIFEQ but with a different comparison
-        # It jumps if src1 <= src2
         dst, src1, src2 = cmd.find('dst'), cmd.find('src1'), cmd.find('src2')
         if None in (dst, src1, src2):
             print("Semantic Error: IFGOTO operation missing argument.", file=sys.stderr)
             exit(5)
         
-        # Check if dst is a valid label
         if dst.attrib['kind'] != 'literal' or dst.attrib['type'] != 'string':
             print("Run-time Error: IFGOTO requires a label as destination.", file=sys.stderr)
             exit(14)
             
-        # Get values and compare
         val1 = self.get_src_value(src1)
         val2 = self.get_src_value(src2)
         
-        # Jump if src1 <= src2
         if val1 <= val2:
             if dst.text not in self.labels:
                 print(f"Run-time Error: Label '{dst.text}' not found.", file=sys.stderr)
                 exit(10)
-            self.pc = self.labels[dst.text] - 1  # Adjusted because self.pc will increment after
+            self.pc = self.labels[dst.text] - 1  
 
     def _compare_args(self, cmd, comparator):
         dst, src1, src2 = cmd.find('dst'), cmd.find('src1'), cmd.find('src2')
@@ -268,27 +256,21 @@ class Interpreter:
             print("Semantic Error: JUMPIF operation missing argument.", file=sys.stderr)
             exit(5)
             
-        # Check if dst is a valid label
         if dst.attrib['type'] != 'string' or dst.attrib['kind'] != 'literal':
             print("Run-time Error: JUMPIF destination must be a label (literal string).", file=sys.stderr)
             exit(14)
             
-        # Get the values for comparison
         val1 = self.get_src_value(src1)
         val2 = self.get_src_value(src2)
         
-        # Attempt to convert values for comparison
         try:
-            # If both values can be converted to integers, do so for comparison
             if isinstance(val1, str) and val1.isdigit() and isinstance(val2, int):
                 val1 = int(val1)
             elif isinstance(val2, str) and val2.isdigit() and isinstance(val1, int):
                 val2 = int(val2)
                 
-            # Print debug information
             self.log_debug(f"Comparing values: {val1} ({type(val1)}) and {val2} ({type(val2)})")
             
-            # Perform the comparison
             return comparator(val1, val2)
         except (ValueError, TypeError) as e:
             print(f"Run-time Error: Cannot compare values of different types: {e}", file=sys.stderr)
@@ -303,7 +285,7 @@ class Interpreter:
             print("Run-time Error: Invalid jump label.", file=sys.stderr)
             exit(10)
         if always_jump or label.text in self.labels:
-            self.pc = self.labels[label.text] - 1  # Adjusted because self.pc will increment after
+            self.pc = self.labels[label.text] - 1 
 
     def call(self, cmd):
         label = cmd.find('dst')
@@ -353,15 +335,11 @@ class Interpreter:
             print("Run-time Error: INTSTR destination must be a variable.", file=sys.stderr)
             exit(14)
             
-        # Get the source value
         val = self.get_src_value(src)
         
-        # Convert integer to string
         try:
             if not isinstance(val, int):
-                # If not already an integer, try to convert
                 val = int(val)
-            # Store the string representation
             self.variables[dst.text] = str(val)
         except (ValueError, TypeError) as e:
             print(f"Run-time Error: Cannot convert to string: {e}", file=sys.stderr)
@@ -377,11 +355,9 @@ class Interpreter:
             print("Run-time Error: CONCAT destination must be a variable.", file=sys.stderr)
             exit(14)
             
-        # Get the source values
         val1 = self.get_src_value(src1)
         val2 = self.get_src_value(src2)
         
-        # Convert to strings and concatenate
         try:
             str1 = str(val1)
             str2 = str(val2)
@@ -402,10 +378,8 @@ class Interpreter:
             print("Run-time Error: LEN destination must be a variable.", file=sys.stderr)
             exit(14)
             
-        # Get the source value
         val = self.get_src_value(src)
         
-        # Calculate string length
         try:
             str_val = str(val)
             length = len(str_val)
@@ -425,22 +399,17 @@ class Interpreter:
             print("Run-time Error: GETAT destination must be a variable.", file=sys.stderr)
             exit(14)
             
-        # Get the source string and index
         string_val = self.get_src_value(src1)
         index_val = self.get_src_value(src2)
         
-        # Get character at index
         try:
             if not isinstance(index_val, int):
-                # If not already an integer, try to convert
                 index_val = int(index_val)
                 
-            # Check if index is valid
             if index_val < 0 or index_val >= len(str(string_val)):
                 print(f"Run-time Error: Index {index_val} out of bounds for string of length {len(str(string_val))}", file=sys.stderr)
                 exit(10)
                 
-            # Get the character at the specified index
             result = str(string_val)[index_val]
             self.variables[dst.text] = result
             self.log_debug(f"Character at index {index_val} in '{string_val}': '{result}'")
@@ -458,38 +427,28 @@ class Interpreter:
             print("Run-time Error: STRBOOL destination must be a variable.", file=sys.stderr)
             exit(14)
             
-        # Get the source value
         val = self.get_src_value(src)
         
-        # Convert boolean to string
         try:
-            # Handle Python boolean values
             if val is True:
                 self.variables[dst.text] = "true"
             elif val is False:
                 self.variables[dst.text] = "false"
-            # Handle integer values (1 and 0)
             elif val == 1:
                 self.variables[dst.text] = "true"
             elif val == 0:
                 self.variables[dst.text] = "false"
-            # Handle string values
             elif isinstance(val, str):
                 if val.lower() in ["true", "1"]:
                     self.variables[dst.text] = "true"
                 elif val.lower() in ["false", "0"]:
                     self.variables[dst.text] = "false"
                 else:
-                    self.variables[dst.text] = "false"  # Default for non-boolean strings
+                    self.variables[dst.text] = "false" 
             else:
-                # Any non-zero value is considered true
                 self.variables[dst.text] = "true" if val else "false"
                 
             self.log_debug(f"Converted boolean '{val}' to string: '{self.variables[dst.text]}'")
         except Exception as e:
             print(f"Run-time Error: Cannot convert to string: {e}", file=sys.stderr)
             exit(14)
-
-# Example of usage:
-# interpreter = Interpreter('program.xml')
-# interpreter.run()
